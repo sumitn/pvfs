@@ -33,6 +33,10 @@
 #include "pint-context.h"
 #include "pint-op.h"
 
+#ifdef PVFS2_CHECKSUM
+#include "dbpf-checksum.h"
+#endif
+
 static gen_mutex_t dbpf_update_size_lock = GEN_MUTEX_INITIALIZER;
 
 typedef struct
@@ -182,7 +186,11 @@ static size_t direct_aligned_write(int fd,
 #ifndef NDEBUG
     /* if debug is enabled, check that fd was opened with O_DIRECT */
 
+#ifdef TARGET_OS_DARWIN
+    if(!(fcntl(fd, F_GETFL) & F_NOCACHE))
+#else
     if(!(fcntl(fd, F_GETFL) & O_DIRECT))
+#endif
     {
         return -EINVAL;
     }
@@ -547,7 +555,11 @@ static size_t direct_aligned_read(int fd,
 #ifndef NDEBUG
     /* if debug is enabled, check that fd was opened with O_DIRECT */
 
+#ifdef TARGET_OS_DARWIN
+    if(!(fcntl(fd, F_GETFL) & F_NOCACHE))
+#else
     if(!(fcntl(fd, F_GETFL) & O_DIRECT))
+#endif
     {
         gossip_err("dbpf_direct_read: trying to do direct IO but file wasn't "
                    "opened with O_DIRECT\n");
@@ -660,6 +672,18 @@ static size_t direct_read(int fd,
 
     return read_size;
 }
+
+#ifdef PVFS2_CHECKSUM
+int cksum_direct_read(int fd, void *buf, size_t size, off_t file_offset)
+{
+    return dbpf_pread(fd, buf, size, file_offset);
+}
+
+int cksum_direct_write(int fd, void *buf, size_t size, off_t file_offset)
+{
+    return dbpf_pwrite(fd, buf, size, file_offset);
+}
+#endif /* PVFS2_CHECKSUM */
 
 static int dbpf_bstream_direct_read_op_svc(void *ptr, PVFS_hint hint)
 {

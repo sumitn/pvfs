@@ -1235,8 +1235,8 @@ static int translate_keyvals_0_0_1(
                 ret = sscanf(tmp_ent->d_name, "%llx.keyval",
                     &(llu(tmp_handle)));
 #elif SIZEOF_LONG_INT == 8
-                ret = sscanf(tmp_ent->d_name, "%lx.keyval",
-                    &(tmp_handle));
+                ret = sscanf(tmp_ent->d_name, "%llx.keyval",
+			     &(tmp_handle));
 #else
 #error Unexpected sizeof(long int)
 #endif

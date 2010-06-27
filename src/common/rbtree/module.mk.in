@@ -1,0 +1,4 @@
+DIR := src/common/rbtree
+LIBSRC += $(DIR)/rbtree.c
+SERVERSRC += $(DIR)/rbtree.c
+LIBBMISRC += $(DIR)/rbtree.c

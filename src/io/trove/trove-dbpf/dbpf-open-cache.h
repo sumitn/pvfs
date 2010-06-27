@@ -23,8 +23,10 @@ enum open_cache_open_type
 struct open_cache_ref
 {
     int fd;
+    int cks_fd;
     enum open_cache_open_type type;
     void* internal; /* pointer to underlying data structure */
+    void *cksum_p;  /* checksum pointer */
 };
 
 void dbpf_open_cache_initialize(void);

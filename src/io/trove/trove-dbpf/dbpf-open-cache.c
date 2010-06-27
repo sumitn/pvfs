@@ -42,7 +42,8 @@ struct open_cache_entry
     TROVE_handle handle;
     int fd;
     enum open_cache_open_type type;
-
+    int cks_fd;
+    void *cksum_p;
     struct qlist_head queue_link;
 };
 
@@ -81,13 +82,13 @@ static gen_mutex_t cache_mutex = GEN_MUTEX_INITIALIZER;
 static struct open_cache_entry prealloc[OPEN_CACHE_SIZE];
 
 static int open_fd(
-    int *fd, 
+    int *fd, int *cks_fd,
     TROVE_coll_id coll_id,
     TROVE_handle handle,
     enum open_cache_open_type type);
 
 static void close_fd(
-    int fd, 
+    int fd, int cks_fd, 
     enum open_cache_open_type type);
 
 inline static struct open_cache_entry * dbpf_open_cache_find_entry(
@@ -107,13 +108,13 @@ void dbpf_open_cache_initialize(void)
      */
     if (OPEN_CACHE_SIZE == 0)
     {
-	gossip_err("Warning: dbpf_open_cache disabled.\n");
+        gossip_err("Warning: dbpf_open_cache disabled.\n");
     }
 
     for (i = 0; i < OPEN_CACHE_SIZE; i++)
     {
         prealloc[i].fd = -1;
-	qlist_add(&prealloc[i].queue_link, &free_list);
+        qlist_add(&prealloc[i].queue_link, &free_list);
     }
 
     gen_mutex_unlock(&cache_mutex);
@@ -193,34 +194,39 @@ int dbpf_open_cache_get(
 
     if (tmp_entry)
     {
-	if (tmp_entry->fd < 0)
-	{
-	    ret = open_fd(&(tmp_entry->fd), coll_id, handle, type);
-	    if (ret < 0)
-	    {
-		gen_mutex_unlock(&cache_mutex);
-		return ret;
-	    }
+        if (tmp_entry->fd < 0)
+        {
+            ret = open_fd(&(tmp_entry->fd), &(tmp_entry->cks_fd), 
+                          coll_id, handle, type);
+            if (ret < 0)
+            {
+                gen_mutex_unlock(&cache_mutex);
+                return ret;
+            }
             tmp_entry->type = type;
-	}
+        }
         out_ref->fd = tmp_entry->fd;
+        out_ref->cks_fd = tmp_entry->cks_fd;
         out_ref->type = type;
 
-	out_ref->internal = tmp_entry;
-	tmp_entry->ref_ct++;
+        out_ref->internal = tmp_entry;
+#ifdef PVFS2_CHECKSUM
+        out_ref->cksum_p = tmp_entry->cksum_p;
+#endif
+        tmp_entry->ref_ct++;
 
-	/* remove the entry and place it at the used head (assuming it
-	 * will be referenced again soon)
-	 */
-	gossip_debug(GOSSIP_DBPF_OPEN_CACHE_DEBUG, "dbpf_open_cache_get: "
+        /* remove the entry and place it at the used head (assuming it
+         * will be referenced again soon)
+         */
+        gossip_debug(GOSSIP_DBPF_OPEN_CACHE_DEBUG, "dbpf_open_cache_get: "
                      "moving to (or reordering in) used list.\n");
-	qlist_del(&tmp_entry->queue_link);
-	qlist_add(&tmp_entry->queue_link, &used_list);
+        qlist_del(&tmp_entry->queue_link);
+        qlist_add(&tmp_entry->queue_link, &used_list);
 
-	gen_mutex_unlock(&cache_mutex);
+        gen_mutex_unlock(&cache_mutex);
 
         assert(out_ref->fd > 0);
-	return 0;
+        return 0;
     }
 
     /* if we fall through to this point, then the object was not found
@@ -229,41 +235,45 @@ int dbpf_open_cache_get(
      */
     if (!qlist_empty(&free_list))
     {
-	tmp_link = free_list.next;
-	tmp_entry = qlist_entry(tmp_link, struct open_cache_entry,
-	    queue_link);
-	qlist_del(&tmp_entry->queue_link);
-	found = 1;
-	gossip_debug(GOSSIP_DBPF_OPEN_CACHE_DEBUG,
-	    "dbpf_open_cache_get: resetting entry from free list.\n");
+        tmp_link = free_list.next;
+        tmp_entry = qlist_entry(tmp_link, struct open_cache_entry,
+            queue_link);
+        qlist_del(&tmp_entry->queue_link);
+        found = 1;
+        gossip_debug(GOSSIP_DBPF_OPEN_CACHE_DEBUG,
+            "dbpf_open_cache_get: resetting entry from free list.\n");
     }
 
     /* anything in unused list (still open, but ref_ct == 0)? */
     if (!found && !qlist_empty(&unused_list))
     {
-	tmp_link = unused_list.next;
-	tmp_entry = qlist_entry(
+        tmp_link = unused_list.next;
+        tmp_entry = qlist_entry(
             tmp_link, struct open_cache_entry, queue_link);
-	qlist_del(&tmp_entry->queue_link);
-	found = 1;
-	gossip_debug(GOSSIP_DBPF_OPEN_CACHE_DEBUG,
-	    "dbpf_open_cache_get: resetting entry from unused list.\n");
+        qlist_del(&tmp_entry->queue_link);
+        found = 1;
+        gossip_debug(GOSSIP_DBPF_OPEN_CACHE_DEBUG,
+            "dbpf_open_cache_get: resetting entry from unused list.\n");
 
-	if (tmp_entry->fd > -1)
-	{
-            close_fd(tmp_entry->fd, tmp_entry->type);
-	    tmp_entry->fd = -1;
-	}
+        if (tmp_entry->fd > -1)
+        {
+            close_fd(tmp_entry->fd, tmp_entry->cks_fd, tmp_entry->type);
+#ifdef PVFS2_CHECKSUM
+            free(tmp_entry->cksum_p);
+#endif
+            tmp_entry->fd = -1;
+        }
     }
    
     if (found)
     {
-	/* have an entry to work with; fill in and place in used list */
-	tmp_entry->ref_ct = 1;
-	tmp_entry->coll_id = coll_id;
-	tmp_entry->handle = handle;
+        /* have an entry to work with; fill in and place in used list */
+        tmp_entry->ref_ct = 1;
+        tmp_entry->coll_id = coll_id;
+        tmp_entry->handle = handle;
 
-        ret = open_fd(&(tmp_entry->fd), coll_id, handle, type);
+        ret = open_fd(&(tmp_entry->fd), &(tmp_entry->cks_fd), 
+                      coll_id, handle, type);
         if (ret < 0)
         {
             qlist_add(&tmp_entry->queue_link, &free_list);
@@ -277,13 +287,14 @@ int dbpf_open_cache_get(
         tmp_entry->type = type;
         out_ref->type = type;
         out_ref->fd = tmp_entry->fd;
+	out_ref->cks_fd = tmp_entry->cks_fd;
 
-	out_ref->internal = tmp_entry;
-	gossip_debug(GOSSIP_DBPF_OPEN_CACHE_DEBUG,
-	    "dbpf_open_cache_get: moving to used list.\n");
-	qlist_add(&tmp_entry->queue_link, &used_list);
-	gen_mutex_unlock(&cache_mutex);
-	return 0;
+        out_ref->internal = tmp_entry;
+        gossip_debug(GOSSIP_DBPF_OPEN_CACHE_DEBUG,
+            "dbpf_open_cache_get: moving to used list.\n");
+        qlist_add(&tmp_entry->queue_link, &used_list);
+        gen_mutex_unlock(&cache_mutex);
+        return 0;
     }
 
     /* if we reach this point the entry wasn't cached _and_ would
@@ -296,7 +307,7 @@ int dbpf_open_cache_get(
 
     gossip_debug(GOSSIP_DBPF_OPEN_CACHE_DEBUG,
         "dbpf_open_cache_get: missed cache entirely.\n");
-    ret = open_fd(&(out_ref->fd), coll_id, handle, type);
+    ret = open_fd(&(out_ref->fd), &(out_ref->cks_fd), coll_id, handle, type);
     if (ret < 0)
     {
         gen_mutex_unlock(&cache_mutex);
@@ -324,36 +335,42 @@ void dbpf_open_cache_put(
     /* handle cached entries */
     if(in_ref->internal)
     {
-	tmp_entry = in_ref->internal;
-	tmp_entry->ref_ct--;
+        tmp_entry = in_ref->internal;
+        tmp_entry->ref_ct--;
 
-	gossip_debug(GOSSIP_DBPF_OPEN_CACHE_DEBUG,
-	    "dbpf_open_cache_put: cached entry.\n");
+#ifdef PVFS2_CHECKSUM
+	tmp_entry->cksum_p = in_ref->cksum_p;
+#endif
+        gossip_debug(GOSSIP_DBPF_OPEN_CACHE_DEBUG,
+            "dbpf_open_cache_put: cached entry.\n");
 
-	if(tmp_entry->ref_ct == 0)
-	{
-	    /* put this in unused list since ref ct hit zero */
-	    move = 1;
-	    qlist_del(&tmp_entry->queue_link);	    
-	}
+        if(tmp_entry->ref_ct == 0)
+        {
+            /* put this in unused list since ref ct hit zero */
+            move = 1;
+            qlist_del(&tmp_entry->queue_link);      
+        }
 
-	if(move)
-	{
-	    gossip_debug(GOSSIP_DBPF_OPEN_CACHE_DEBUG,
-		"dbpf_open_cache_put: move to unused list.\n");
-	    qlist_add_tail(&tmp_entry->queue_link, &unused_list);
-	}
+        if(move)
+        {
+            gossip_debug(GOSSIP_DBPF_OPEN_CACHE_DEBUG,
+                "dbpf_open_cache_put: move to unused list.\n");
+            qlist_add_tail(&tmp_entry->queue_link, &unused_list);
+        }
     }
     else
     {
-	gossip_debug(GOSSIP_DBPF_OPEN_CACHE_DEBUG,
-	    "dbpf_open_cache_put: uncached entry.\n");
-	/* this wasn't cached; go ahead and close up */
-	if(in_ref->fd > -1)
-	{
-            close_fd(in_ref->fd, in_ref->type);
-	    in_ref->fd = -1;
-	}
+        gossip_debug(GOSSIP_DBPF_OPEN_CACHE_DEBUG,
+            "dbpf_open_cache_put: uncached entry.\n");
+        /* this wasn't cached; go ahead and close up */
+        if(in_ref->fd > -1)
+        {
+            close_fd(in_ref->fd, in_ref->cks_fd, in_ref->type);
+#ifdef PVFS2_CHECKSUM
+            free(in_ref->cksum_p);
+#endif
+            in_ref->fd = -1;
+        }
     }
     gen_mutex_unlock(&cache_mutex);
     return;
@@ -384,21 +401,21 @@ int dbpf_open_cache_remove(
     /* TODO: remove this search later when we have more confidence */
     qlist_for_each(tmp_link, &used_list)
     {
-	tmp_entry = qlist_entry(tmp_link, struct open_cache_entry,
-	    queue_link);
-	if ((tmp_entry->handle == handle) &&
+        tmp_entry = qlist_entry(tmp_link, struct open_cache_entry,
+            queue_link);
+        if ((tmp_entry->handle == handle) &&
             (tmp_entry->coll_id == coll_id))
-	{
-	    assert(0);
-	}
+        {
+            assert(0);
+        }
     }
 
     /* see if the item is in the unused list (ref_ct == 0) */    
     qlist_for_each_safe(tmp_link, scratch, &unused_list)
     {
-	tmp_entry = qlist_entry(tmp_link, struct open_cache_entry,
-	    queue_link);
-	if ((tmp_entry->handle == handle) &&
+        tmp_entry = qlist_entry(tmp_link, struct open_cache_entry,
+            queue_link);
+        if ((tmp_entry->handle == handle) &&
              (tmp_entry->coll_id == coll_id))
         {
             qlist_del(&tmp_entry->queue_link);
@@ -409,19 +426,22 @@ int dbpf_open_cache_remove(
 
     if (found)
     {
-	gossip_debug(GOSSIP_DBPF_OPEN_CACHE_DEBUG,
-	    "dbpf_open_cache_remove: unused entry.\n");
-	if (tmp_entry->fd > -1)
-	{
-            close_fd(tmp_entry->fd, tmp_entry->type);
-	    tmp_entry->fd = -1;
-	}
-	qlist_add(&tmp_entry->queue_link, &free_list);
+        gossip_debug(GOSSIP_DBPF_OPEN_CACHE_DEBUG,
+            "dbpf_open_cache_remove: unused entry.\n");
+        if (tmp_entry->fd > -1)
+        {
+            close_fd(tmp_entry->fd, tmp_entry->cks_fd, tmp_entry->type);
+#ifdef PVFS2_CHECKSUM
+            free(tmp_entry->cksum_p);
+#endif
+            tmp_entry->fd = -1;
+        }
+        qlist_add(&tmp_entry->queue_link, &free_list);
     }
     else
     {
-	gossip_debug(GOSSIP_DBPF_OPEN_CACHE_DEBUG,
-	    "dbpf_open_cache_remove: uncached entry.\n");
+        gossip_debug(GOSSIP_DBPF_OPEN_CACHE_DEBUG,
+            "dbpf_open_cache_remove: uncached entry.\n");
     }
 
     tmp_error = 0;
@@ -445,7 +465,7 @@ int dbpf_open_cache_remove(
 }
 
 static int open_fd(
-    int *fd, 
+    int *fd, int *cks_fd,
     TROVE_coll_id coll_id,
     TROVE_handle handle,
     enum open_cache_open_type type)
@@ -459,7 +479,7 @@ static int open_fd(
                  llu(handle));
 
     DBPF_GET_BSTREAM_FILENAME(filename, PATH_MAX,
-			      my_storage_p->name, coll_id, llu(handle));
+                              my_storage_p->name, coll_id, llu(handle));
 
     gossip_debug(GOSSIP_DBPF_OPEN_CACHE_DEBUG,
                  "dbpf_open_cache open_fd: filename: %s\n", filename);
@@ -475,10 +495,21 @@ static int open_fd(
 
     if(type == DBPF_FD_DIRECT_WRITE || type == DBPF_FD_DIRECT_READ)
     {
+#ifdef TARGET_OS_DARWIN
+        flags |= F_NOCACHE;
+#else
         flags |= O_DIRECT;
+#endif
     }
 
     *fd = DBPF_OPEN(filename, flags, mode);
+#ifdef PVFS2_CHECKSUM
+    DBPF_GET_CHECKSUM_FILENAME(filename, PATH_MAX, my_storage_p->name, coll_id,
+			    llu(handle));
+    *cks_fd = DBPF_OPEN(filename, flags, mode);
+    if(*cks_fd <= 0)
+	gossip_lerr("Unable to open checksum file.\n");
+#endif
     return ((*fd < 0) ? -trove_errno_to_trove_error(errno) : 0);
 }
 
@@ -492,9 +523,12 @@ static void dbpf_open_cache_entries_finalize(struct qlist_head *list)
         entry = qlist_entry(list_entry, struct open_cache_entry, queue_link);
         if(entry->fd > -1)
         {
-            close_fd(entry->fd, entry->type);
-	    entry->fd = -1;
-	}
+            close_fd(entry->fd, entry->cks_fd, entry->type);
+#ifdef PVFS2_CHECKSUM
+	    free(entry->cksum_p);
+#endif
+            entry->fd = -1;
+        }
         qlist_del(&entry->queue_link);
     }
     /* Cancel the deletion thread */
@@ -512,7 +546,7 @@ inline static struct open_cache_entry * dbpf_open_cache_find_entry(
 
     qlist_for_each(tmp_link, list)
     {
-	tmp_entry = qlist_entry(
+        tmp_entry = qlist_entry(
             tmp_link, struct open_cache_entry, queue_link);
         if((tmp_entry->handle == handle) &&
            (tmp_entry->coll_id == coll_id))
@@ -622,12 +656,13 @@ static void* unlink_bstream(void *context)
 }
 
 static void close_fd(
-    int fd, 
+    int fd, int cks_fd,
     enum open_cache_open_type type)
 {
     gossip_debug(GOSSIP_DBPF_OPEN_CACHE_DEBUG,
         "dbpf_open_cache closing fd %d of type %d\n", fd, type);
     DBPF_CLOSE(fd);
+    DBPF_CLOSE(cks_fd);
 }
 
 /*

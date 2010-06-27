@@ -19,6 +19,7 @@ extern "C" {
 #include "dbpf-keyval-pcache.h"
 #include "dbpf-open-cache.h"
 #include "pint-event.h"
+#include "pvfs2-config.h"
 
 /* For unknown Berkeley DB errors, we return some large value
  */
@@ -124,6 +125,15 @@ do {                                                                      \
            __stoname, __cid, BSTREAM_DIRNAME,                             \
            llu(DBPF_BSTREAM_GET_BUCKET(__handle)), llu(__handle));        \
 } while (0)
+
+#ifdef PVFS2_CHECKSUM
+#define DBPF_GET_CHECKSUM_FILENAME(__b, __pm, __stoname, __cid, __handle)  \
+do {                                                                       \
+  snprintf(__b, __pm, "/%s/%08x/%s/%.8llu/%08llx.cksum",                 \
+           __stoname, __cid, BSTREAM_DIRNAME,                              \
+           llu(DBPF_BSTREAM_GET_BUCKET(__handle)), llu(__handle));         \
+} while (0)
+#endif
 
 /* arguments are: buf, path_max, stoname, collid, handle */
 #define DBPF_GET_STRANDED_BSTREAM_FILENAME(                  \
@@ -585,7 +595,11 @@ PVFS_error dbpf_db_error_to_trove_error(int db_error_value);
 #define DBPF_READ   read
 #define DBPF_CLOSE  close
 #define DBPF_UNLINK unlink
+#ifdef TARGET_OS_DARWIN
+#define DBPF_SYNC   fsync
+#else
 #define DBPF_SYNC   fdatasync
+#endif
 #define DBPF_RESIZE ftruncate
 #define DBPF_FSTAT  fstat
 #define DBPF_ACCESS access

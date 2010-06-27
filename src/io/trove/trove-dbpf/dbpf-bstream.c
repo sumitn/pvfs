@@ -30,6 +30,10 @@
 
 #include "dbpf-alt-aio.h"
 
+#ifdef PVFS2_CHECKSUM
+#include "dbpf-checksum.h"
+#endif
+
 extern gen_mutex_t dbpf_attr_cache_mutex;
 
 #define AIOCB_ARRAY_SZ 64
@@ -93,6 +97,11 @@ static void aio_progress_notification(union sigval sig)
 
     aiocb_p = op_p->u.b_rw_list.aiocb_array;
     assert(aiocb_p);
+
+#ifdef PVFS2_CHECKSUM
+    checksum_complete_request(cur_op->cks, 
+			      (unsigned char *)aiocb_p[0].aio_buf);
+#endif
 
     gen_mutex_lock(&cur_op->mutex);
     state = cur_op->op.state;
@@ -493,6 +502,14 @@ static int issue_or_delay_io_operation(
 
             }
         }
+
+#ifdef PVFS2_CHECKSUM
+	cur_op->cks = checksum_submit_request(&cur_op->op.u.b_rw_list.open_ref,
+					aiocb_ptr_array[0]->aio_offset,
+					aiocb_ptr_array[0]->aio_nbytes,
+					(char *)aiocb_ptr_array[0]->aio_buf,
+					aiocb_ptr_array[0]->aio_lio_opcode);
+#endif
 
         ret = cur_op->op.u.b_rw_list.aio_ops->lio_listio(
             LIO_NOWAIT, aiocb_ptr_array,

@@ -64,6 +64,9 @@ typedef struct
 
     PINT_op_id mgr_op_id;
     struct qlist_head link;
+#ifdef PVFS2_CHECKSUM
+    void *cks;
+#endif
 } dbpf_queued_op_t;
 
 dbpf_queued_op_t *dbpf_queued_op_alloc(void);

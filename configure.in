@@ -281,6 +281,11 @@ AC_ARG_ENABLE(static,
 [build_static=$enableval], [build_static=yes])
 AC_SUBST(build_static)
 
+AC_ARG_ENABLE([checksum],
+[  --enable-checksum       Enable checksum],
+AC_DEFINE(PVFS2_CHECKSUM, 1, [Use Checksum])
+)
+
 dnl NOTE: removing the linux-gnu host check for now; we may want to put it back
 dnl before releaseing any code, though...  -Phil
 dnl 
@@ -1115,6 +1120,7 @@ src/io/trove/trove-dbpf/module.mk
 src/common/misc/module.mk
 src/common/quickhash/module.mk
 src/common/quicklist/module.mk
+src/common/rbtree/module.mk
 src/common/dotconf/module.mk
 src/common/id-generator/module.mk
 src/common/gossip/module.mk

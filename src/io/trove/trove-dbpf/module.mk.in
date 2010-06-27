@@ -1,5 +1,7 @@
 DIR := src/io/trove/trove-dbpf
 SERVERSRC += \
+	$(DIR)/dbpf-checksum-threads.c \
+	$(DIR)/dbpf-checksum.c \
 	$(DIR)/dbpf-bstream.c \
 	$(DIR)/dbpf-collection.c \
 	$(DIR)/dbpf-bstream-aio.c \
