@@ -182,7 +182,11 @@ static size_t direct_aligned_write(int fd,
 #ifndef NDEBUG
     /* if debug is enabled, check that fd was opened with O_DIRECT */
 
+#ifdef TARGET_OS_DARWIN
+    if(!(fcntl(fd, F_GETFL) & F_NOCACHE))
+#else
     if(!(fcntl(fd, F_GETFL) & O_DIRECT))
+#endif
     {
         return -EINVAL;
     }
@@ -547,7 +551,11 @@ static size_t direct_aligned_read(int fd,
 #ifndef NDEBUG
     /* if debug is enabled, check that fd was opened with O_DIRECT */
 
+#ifdef TARGET_OS_DARWIN
+    if(!(fcntl(fd, F_GETFL) & F_NOCACHE))
+#else
     if(!(fcntl(fd, F_GETFL) & O_DIRECT))
+#endif
     {
         gossip_err("dbpf_direct_read: trying to do direct IO but file wasn't "
                    "opened with O_DIRECT\n");

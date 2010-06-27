@@ -585,7 +585,11 @@ PVFS_error dbpf_db_error_to_trove_error(int db_error_value);
 #define DBPF_READ   read
 #define DBPF_CLOSE  close
 #define DBPF_UNLINK unlink
+#ifdef TARGET_OS_DARWIN
+#define DBPF_SYNC   fsync
+#else
 #define DBPF_SYNC   fdatasync
+#endif
 #define DBPF_RESIZE ftruncate
 #define DBPF_FSTAT  fstat
 #define DBPF_ACCESS access

@@ -475,7 +475,11 @@ static int open_fd(
 
     if(type == DBPF_FD_DIRECT_WRITE || type == DBPF_FD_DIRECT_READ)
     {
+#ifdef TARGET_OS_DARWIN
+				flags |= F_NOCACHE;
+#else
         flags |= O_DIRECT;
+#endif
     }
 
     *fd = DBPF_OPEN(filename, flags, mode);

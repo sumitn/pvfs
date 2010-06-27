@@ -7,6 +7,7 @@
 #define _XOPEN_SOURCE 600
 #include <errno.h>
 #include <stdlib.h>
+#include "pvfs2-config.h"
 #ifdef HAVE_MALLOC_H
 #include <malloc.h>
 #endif
@@ -19,6 +20,12 @@
  *
  * returns pointer to memory on success, NULL on failure
  */
+#ifdef TARGET_OS_DARWIN
+inline void* PINT_mem_aligned_alloc(size_t size, size_t alignment)
+{
+		return malloc(size);
+}
+#else
 inline void* PINT_mem_aligned_alloc(size_t size, size_t alignment)
 {
     int ret;
@@ -30,8 +37,10 @@ inline void* PINT_mem_aligned_alloc(size_t size, size_t alignment)
         errno = ret;
         return NULL;
     }
+
     return ptr;
 }
+#endif
 
 /* PINT_mem_aligned_free()
  *
