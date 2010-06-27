@@ -1,0 +1,126 @@
+diff --git a/src/common/gossip/gossip.c b/src/common/gossip/gossip.c
+index 37dd5cd..838da51 100644
+--- a/src/common/gossip/gossip.c
++++ b/src/common/gossip/gossip.c
+@@ -488,7 +488,7 @@ static int gossip_debug_fp_va(FILE *fp, char prefix,
+             tp = tv.tv_sec;
+             strftime(bptr, 9, "%H:%M:%S", localtime(&tp));
+             sprintf(bptr+8, ".%06ld (%ld)] ", (long)tv.tv_usec, 
+-                    gen_thread_self());
++                    (long int)gen_thread_self());
+             bptr += 30;
+             bsize -= 30;
+             break;
+diff --git a/src/common/misc/digest.c b/src/common/misc/digest.c
+index 5229b5e..256699e 100644
+--- a/src/common/misc/digest.c
++++ b/src/common/misc/digest.c
+@@ -26,7 +26,6 @@
+ 
+ #ifdef __GEN_POSIX_LOCKING__
+ #include <pthread.h>
+-#include <linux/unistd.h>
+ #include <sys/types.h>
+ #include <sys/syscall.h>
+ #include <unistd.h>
+diff --git a/src/common/misc/pint-mem.c b/src/common/misc/pint-mem.c
+index fdf6e44..3272bee 100644
+--- a/src/common/misc/pint-mem.c
++++ b/src/common/misc/pint-mem.c
+@@ -7,6 +7,7 @@
+ #define _XOPEN_SOURCE 600
+ #include <errno.h>
+ #include <stdlib.h>
++#include "pvfs2-config.h"
+ #ifdef HAVE_MALLOC_H
+ #include <malloc.h>
+ #endif
+@@ -19,6 +20,12 @@
+  *
+  * returns pointer to memory on success, NULL on failure
+  */
++#ifdef TARGET_OS_DARWIN
++inline void* PINT_mem_aligned_alloc(size_t size, size_t alignment)
++{
++		return malloc(size);
++}
++#else
+ inline void* PINT_mem_aligned_alloc(size_t size, size_t alignment)
+ {
+     int ret;
+@@ -30,8 +37,10 @@ inline void* PINT_mem_aligned_alloc(size_t size,
+ #size_t alignment)
+         errno = ret;
+         return NULL;
+     }
++
+     return ptr;
+ }
++#endif
+ 
+ /* PINT_mem_aligned_free()
+  *
+diff --git a/src/io/trove/trove-dbpf/dbpf-bstream-direct.c
+ b/src/io/trove/trove-dbpf/dbpf-bstream-direct.c
+index 0296316..55cf0b7 100644
+--- a/src/io/trove/trove-dbpf/dbpf-bstream-direct.c
++++ b/src/io/trove/trove-dbpf/dbpf-bstream-direct.c
+@@ -182,7 +182,11 @@ static size_t direct_aligned_write(int fd,
+ #ifndef NDEBUG
+     /* if debug is enabled, check that fd was opened with O_DIRECT */
+ 
++#ifdef TARGET_OS_DARWIN
++    if(!(fcntl(fd, F_GETFL) & F_NOCACHE))
++#else
+     if(!(fcntl(fd, F_GETFL) & O_DIRECT))
++#endif
+     {
+         return -EINVAL;
+     }
+@@ -547,7 +551,11 @@ static size_t direct_aligned_read(int fd,
+ #ifndef NDEBUG
+     /* if debug is enabled, check that fd was opened with O_DIRECT */
+ 
++#ifdef TARGET_OS_DARWIN
++    if(!(fcntl(fd, F_GETFL) & F_NOCACHE))
++#else
+     if(!(fcntl(fd, F_GETFL) & O_DIRECT))
++#endif
+     {
+         gossip_err("dbpf_direct_read: trying to do direct IO but file
+		 wasn't "
+                    "opened with O_DIRECT\n");
+diff --git a/src/io/trove/trove-dbpf/dbpf-open-cache.c
+b/src/io/trove/trove-dbpf/dbpf-open-cache.c
+index b38f370..2a865bd 100644
+--- a/src/io/trove/trove-dbpf/dbpf-open-cache.c
++++ b/src/io/trove/trove-dbpf/dbpf-open-cache.c
+@@ -475,7 +475,11 @@ static int open_fd(
+ 
+     if(type == DBPF_FD_DIRECT_WRITE || type == DBPF_FD_DIRECT_READ)
+     {
++#ifdef TARGET_OS_DARWIN
++				flags |= F_NOCACHE;
++#else
+         flags |= O_DIRECT;
++#endif
+     }
+ 
+     *fd = DBPF_OPEN(filename, flags, mode);
+diff --git a/src/io/trove/trove-dbpf/dbpf.h
+b/src/io/trove/trove-dbpf/dbpf.h
+index d8db9b7..4d12546 100644
+--- a/src/io/trove/trove-dbpf/dbpf.h
++++ b/src/io/trove/trove-dbpf/dbpf.h
+@@ -585,7 +585,11 @@ PVFS_error dbpf_db_error_to_trove_error(int db_error_value);
+ #define DBPF_READ   read
+ #define DBPF_CLOSE  close
+ #define DBPF_UNLINK unlink
++#ifdef TARGET_OS_DARWIN
++#define DBPF_SYNC   fsync
++#else
+ #define DBPF_SYNC   fdatasync
++#endif
+ #define DBPF_RESIZE ftruncate
+ #define DBPF_FSTAT  fstat
+ #define DBPF_ACCESS access
